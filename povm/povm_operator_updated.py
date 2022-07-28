@@ -6,8 +6,8 @@ from copy import deepcopy
 
 from qiskit.quantum_info import Pauli
 from qiskit import QuantumRegister, ClassicalRegister
-from qiskit.aqua.operators.legacy import WeightedPauliOperator
-from qiskit.aqua import AquaError
+from qiskit.opflow import OperatorBase, SummedOp,ComposedOp
+from qiskit.opflow import OpflowError
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -29,8 +29,8 @@ _PAULI_MATRICES = {
 }
 
 
-class POVMOperator(WeightedPauliOperator):
-    """A weighted POVM based operator built on the WeightedPauliOperator class"""
+class POVMOperator(SummedOp):
+    """A weighted POVM based operator built on the PauliSumOp class"""
 
     def __init__(
         self,
@@ -43,7 +43,7 @@ class POVMOperator(WeightedPauliOperator):
     ) -> None:
         """
         Args:
-            paulis: the list of weighted Paulis or a WeightedPauliOperator, where a weighted pauli is
+            paulis: the list of weighted Paulis or a PauliSumOp, where a weighted pauli is
                     composed of a length-2 list and the first item is the
                     weight and the second item is the Pauli object.
             basis: the grouping basis, each element is a tuple composed of the basis
@@ -59,33 +59,35 @@ class POVMOperator(WeightedPauliOperator):
                          and the projective measurement at the output, respectively
                          (from arXiv:1407.0056), bounded by [0,1]
         """
-
-        if isinstance(paulis, WeightedPauliOperator):
+        print('Here')
+        if isinstance(paulis, SummedOp):
             self._basis = basis
             self._z2_symmetries = z2_symmetries
             self._name = name if name is not None else ""
 
             # plain store the paulis, the group information is store in the basis
-            self._paulis_table = paulis._paulis_table.copy()
-            self._paulis = paulis._paulis.copy()
-            self._basis = paulis._basis.copy()
-            self._atol = paulis._atol
+            #self._paulis_table = paulis._paulis_table.copy()
+            self._paulis = paulis.oplist
+            #super().__init__(paulis.oplist)
+            # self._basis = paulis._basis.copy()
+            # self._atol = paulis._atol
         else:
             # TODO: This becomes very slow when there are many Pauli strings, due
             # to a simplification happening in the basis class init.
+            
             super().__init__(paulis, basis, z2_symmetries, atol, name)
 
-        self._num_qubits = super().num_qubits
+        self._num_qubits = paulis.num_qubits
 
-        paulis_dict = super().to_dict()
-        print('paulis_dict:', paulis_dict)
-        for o in paulis_dict["paulis"]:
-            o["coeff"] = o["coeff"]["real"] + 1j * o["coeff"]["imag"]
+        paulis_dict = dict(paulis.__dict__)
+        # print('paulis_dict:', paulis_dict)
+        # for o in paulis_dict["_oplist"]:
+        #     o["_coeff"] = o["_coeff"]["real"] + 1j * o["_coeff"]["imag"]
 
-        self._k = [o["label"] for o in paulis_dict["paulis"]]
-        self._c_k = np.array([o["coeff"] for o in paulis_dict["paulis"]])
-        print('self._k:', self._k) # DEBUG
-        print('self._c_k:', self._c_k) # DEBUG
+        self._k = [str(o) for o in paulis_dict["_oplist"]]
+        self._c_k = np.array([o.coeff.real+1j*o.coeff.imag for o in paulis_dict["_oplist"]])
+        print('self._k:', self._k)
+        print('self._c_k:', self._c_k)
 
         if povm_params is None:
             povm_params = self._num_qubits * list(_SIC_PARAMS)
@@ -171,15 +173,15 @@ class POVMOperator(WeightedPauliOperator):
             QuantumCircuit: the quantum circuit with the POVM
 
         Raises:
-            AquaError: if Operator is empty
-            AquaError: if quantum register is not provided explicitly and
+            OpflowError: if Operator is empty
+            OpflowError: if quantum register is not provided explicitly and
                        cannot find quantum register with `q` as the name
-            AquaError: The provided qr is not in the wave_function
+            OpflowError: The provided qr is not in the wave_function
         """
-        if self.is_empty():
-            raise AquaError("Operator is empty, check the operator.")
+        # if self.is_empty():
+        #     raise OpflowError("Operator is empty, check the operator.")
         # pylint: disable=import-outside-toplevel
-        from qiskit.aqua.utils.run_circuits import find_regs_by_name
+        # from qiskit.aqua.utils.run_circuits import find_regs_by_name
 
         if statevector_mode:
             raise NotImplementedError
@@ -187,20 +189,20 @@ class POVMOperator(WeightedPauliOperator):
         if q is None:
             q = find_regs_by_name(wave_function, "q")
             if q is None:
-                raise AquaError(
+                raise OpflowError(
                     "Either provide the quantum register (qr) explicitly or use"
                     " `q` as the name of the quantum register in the input circuit."
                 )
         else:
             if not wave_function.has_register(q):
-                raise AquaError(
+                raise OpflowError(
                     "The provided QuantumRegister (qr) is not in the circuit."
                 )
 
         nq = len(q)
 
         if nq != self._num_qubits:
-            raise AquaError(
+            raise OpflowError(
                 "The number of qubits of the provided circuit does not much that of the POVM."
             )
 
@@ -235,13 +237,13 @@ class POVMOperator(WeightedPauliOperator):
             b_matrix = self._b_matrices
 
         b_prod = 1.0
-        print('k:', k) # DEBUG
+        print('k:', k)
         for i, ki in enumerate(k):
             # Notice that qiskit starts indexing from the right
             idx = self._num_qubits - i - 1
             i_mi = int(m[i])
             b_prod *= b_matrix[idx][ki][i_mi]
-        print('b_prod:', b_prod) # DEBUG
+        print('b_prod:', b_prod)
         return b_prod
 
     def _b_matrix_prod_array(self, bit_string):
@@ -261,10 +263,10 @@ class POVMOperator(WeightedPauliOperator):
             float: the mean value
             float: the standard error on the mean
         Raises:
-            AquaError: if Operator is empty
+            OpflowError: if Operator is empty
         """
-        if self.is_empty():
-            raise AquaError("Operator is empty, check the operator.")
+        # if self.is_empty():
+        #     raise OpflowError("Operator is empty, check the operator.")
 
         if statevector_mode:
             raise NotImplementedError
@@ -426,7 +428,7 @@ class POVMOperator(WeightedPauliOperator):
     def _simplify(outcome):
         n = len(outcome)
         if n % 2 != 0:
-            raise AquaError("The result should have an even number of qubits.")
+            raise OpflowError("The result should have an even number of qubits.")
         simplified_outcome = ""
         for i in range(0, n, 2):
             simplified_outcome += str(2 * int(outcome[i]) + int(outcome[i + 1]))
@@ -441,7 +443,7 @@ class POVMOperator(WeightedPauliOperator):
             input_coords (array): a vector of parameters in [0, 1]
 
         Raises:
-            AquaError: An error if the resulting vector is unnormalized
+            OpflowError: An error if the resulting vector is unnormalized
 
         Returns:
             array: a D-dimensional vector of components
@@ -457,7 +459,7 @@ class POVMOperator(WeightedPauliOperator):
         rn[-1] = s
 
         if not np.isclose(np.sum(rn ** 2), 1.0):
-            raise AquaError(
+            raise OpflowError(
                 f"Unnormalised vector for input coordinates {input_coords}. Norm: {np.sum(rn**2)}. Vector: {rn}."
             )
 
@@ -514,7 +516,7 @@ class POVMOperator(WeightedPauliOperator):
                 break
 
         if not np.isclose(U.conj().T @ U, np.eye(4)).all():
-            raise AquaError(f"U is not unitary. Params: {params}. Unitary {U}")
+            raise OpflowError(f"U is not unitary. Params: {params}. Unitary {U}")
 
         return U
 
@@ -533,7 +535,7 @@ class POVMOperator(WeightedPauliOperator):
             # The column of U is the bra of the direction of each projector
             povm[p] = np.outer(U[p, 0:2].conj(), U[p, 0:2])
         if not np.isclose(np.sum(povm, axis=0), np.eye(2)).all():
-            raise AquaError("Invalid POVM unitary")
+            raise OpflowError("Invalid POVM unitary")
         return povm
 
     @staticmethod
@@ -612,3 +614,26 @@ class POVMOperator(WeightedPauliOperator):
                 decomp[it][ii] = d[i]
 
         return decomp
+
+
+def find_regs_by_name(circuit, name, qreg=True):
+    """Find the registers in the circuits.
+
+    Args:
+        circuit (QuantumCircuit): the quantum circuit.
+        name (str): name of register
+        qreg (bool): quantum or classical register
+
+    Returns:
+        QuantumRegister or ClassicalRegister or None: if not found, return None.
+
+    """
+    found_reg = None
+    regs = circuit.qregs if qreg else circuit.cregs
+    for reg in regs:
+        if reg.name == name:
+            found_reg = reg
+            break
+    return found_reg
+
+

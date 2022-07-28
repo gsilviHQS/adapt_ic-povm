@@ -133,3 +133,8 @@ raw_data/
 logs/
 figures/
 data.tar
+
+*.png
+_jkmn.py
+aQa-TutorialsFermion_to_qubit_transformations-solutions.ipynb
+.vscode/settings.json

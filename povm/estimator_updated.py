@@ -1,15 +1,22 @@
 import numpy as np
 from qiskit import execute, Aer, QuantumCircuit
 
-from povm.povm_operator import POVMOperator
-from povm.povm_optimizer import GradientDescentOptimizer
+from povm.povm_operator_updated import POVMOperator
+from povm.povm_optimizer_updated import GradientDescentOptimizer
 
-from qiskit.aqua.operators.legacy import (
-    LegacyBaseOperator,
-    WeightedPauliOperator,
-    op_converter,
+# from qiskit.aqua.operators.legacy import (
+#     LegacyBaseOperator,
+#     WeightedPauliOperator,
+#     op_converter,
+# )
+from qiskit.opflow import (
+    OperatorBase,
+    ConverterBase,
+    SummedOp
 )
-from qiskit.aqua.operators.legacy import TPBGroupedWeightedPauliOperator
+
+
+# from qiskit.aqua.operators.legacy import OperatorBase
 from time import time
 import logging
 
@@ -32,7 +39,7 @@ class Estimator:
         """Instantiates a Estimator
         Args:
             qc (QuantumCircuit): circuit implementing the state
-            qubitOp (WeightedPauliOperator): The operator to evaluate
+            qubitOp (OperatorBase): The operator to evaluate
             exact (float): The exact value for the operator on the circuit qc
             backend (BaseBackend, optional): the backend for running the circuit.
                                 Defaults to Aer.get_backend('qasm_simulator').
@@ -42,7 +49,7 @@ class Estimator:
         """
         self.op = None
 
-        if isinstance(qubitOp, LegacyBaseOperator):
+        if isinstance(qubitOp, OperatorBase):
             self.op = qubitOp
         else:
             raise ValueError("Wrong qubitOp format")
@@ -80,6 +87,7 @@ class Estimator:
                 int: effective number of shots used
         """
         shots_per_circuit = int(np.floor(total_shots / self.num_circuits))
+        
 
         if shots_per_circuit < 1:
             raise ValueError(
@@ -143,19 +151,19 @@ class PauliEstimator(Estimator):
         """Instantiates a PauliEstimator
         Args:
             qc (QuantumCircuit): circuit implementing the state
-            qubitOp (WeightedPauliOperator): The operator to evaluate
+            qubitOp (OperatorBase): The operator to evaluate
             exact (float): The exact value for the operator on the circuit qc.
             backend (BaseBackend, optional): the backend for running the circuit.
                                 Defaults to Aer.get_backend('qasm_simulator').
         Raises:
             ValueError: if the qubitOp format is not right
         """
-        if isinstance(qubitOp, WeightedPauliOperator):
+        if isinstance(qubitOp, OperatorBase):
             super().__init__(
                 qc, qubitOp, exact, backend=backend, return_counts=return_counts
             )
         else:
-            raise ValueError("Expected a WeightedPauliOperator")
+            raise ValueError("Expected a OperatorBase")
 
         self.method = "Pauli"
 
@@ -176,7 +184,7 @@ class GroupedPauliEstimator(Estimator):
         """Instantiates a PauliEstimator
         Args:
             qc (QuantumCircuit): circuit implementing the state
-            qubitOp (WeightedPauliOperator): The operator to evaluate
+            qubitOp (OperatorBase): The operator to evaluate
             exact (float): The exact value for the operator on the circuit qc.
             backend (BaseBackend, optional): the backend for running the circuit.
                                 Defaults to Aer.get_backend('qasm_simulator').
@@ -187,16 +195,16 @@ class GroupedPauliEstimator(Estimator):
             super().__init__(
                 qc, qubitOp, exact, backend=backend, return_counts=return_counts
             )
-        elif isinstance(qubitOp, WeightedPauliOperator):
-            op = op_converter.to_tpb_grouped_weighted_pauli_operator(
-                qubitOp, TPBGroupedWeightedPauliOperator.sorted_grouping
+        elif isinstance(qubitOp, OperatorBase):
+            op = ConverterBase.to_tpb_grouped_weighted_pauli_operator(
+                qubitOp, OperatorBase.sorted_grouping
             )
             super().__init__(
                 qc, op, exact, backend=backend, return_counts=return_counts
             )
         else:
             raise ValueError(
-                "Expected a GroupedPauliEstimator or WeightedPauliOperator"
+                "Expected a GroupedPauliEstimator or OperatorBase"
             )
 
         self.method = "Grouped_Pauli"
@@ -219,7 +227,7 @@ class POVMEstimator(Estimator):
         """Instantiates a PauliEstimator
         Args:
             qc (QuantumCircuit): circuit implementing the state
-            qubitOp (WeightedPauliOperator): The operator to evaluate
+            qubitOp (OperatorBase): The operator to evaluate
             exact (float): The exact value for the operator on the circuit qc.
             backend (BaseBackend, optional): the backend for running the circuit.
                                 Defaults to Aer.get_backend('qasm_simulator').
@@ -230,13 +238,14 @@ class POVMEstimator(Estimator):
             super().__init__(
                 qc, qubitOp, exact, backend=backend, return_counts=return_counts
             )
-        elif isinstance(qubitOp, WeightedPauliOperator):
+        elif isinstance(qubitOp, SummedOp):
+            print('Initializing POVMOperator')
             op = POVMOperator(qubitOp, povm_params=povm_params)
             super().__init__(
                 qc, op, exact, backend=backend, return_counts=return_counts
             )
         else:
-            raise ValueError("Expected a POVMOperator or WeightedPauliOperator")
+            raise ValueError("Expected a POVMOperator or OperatorBase")
 
         self.method = "SIC-POVM"
 
@@ -275,7 +284,7 @@ class GooglePOVMEstimator(Estimator):
         """Instantiates a PauliEstimator
         Args:
             qc (QuantumCircuit): circuit implementing the state
-            qubitOp (WeightedPauliOperator): The operator to evaluate
+            qubitOp (OperatorBase): The operator to evaluate
             exact (float): The exact value for the operator on the circuit qc.
             backend (BaseBackend, optional): the backend for running the circuit.
                                 Defaults to Aer.get_backend('qasm_simulator').
@@ -289,7 +298,7 @@ class GooglePOVMEstimator(Estimator):
             super().__init__(
                 qc, qubitOp, exact, backend=backend, return_counts=return_counts
             )
-        elif isinstance(qubitOp, WeightedPauliOperator):
+        elif isinstance(qubitOp, OperatorBase):
             op = POVMOperator(
                 qubitOp, povm_params=self._Google_params * qubitOp.num_qubits
             )
@@ -297,7 +306,7 @@ class GooglePOVMEstimator(Estimator):
                 qc, op, exact, backend=backend, return_counts=return_counts
             )
         else:
-            raise ValueError("Expected a POVMOperator or WeightedPauliOperator")
+            raise ValueError("Expected a POVMOperator or OperatorBase")
 
         self.method = "Google-POVM"
 
@@ -326,7 +335,7 @@ class GradPOVMEstimator(Estimator):
         """Instantiates a PauliEstimator
         Args:
             qc (QuantumCircuit): circuit implementing the state
-            qubitOp (WeightedPauliOperator): The operator to evaluate
+            qubitOp (OperatorBase): The operator to evaluate
             exact (float): The exact value for the operator on the circuit qc.
             backend (BaseBackend, optional): the backend for running the circuit.
                                 Defaults to Aer.get_backend('qasm_simulator').
@@ -337,13 +346,13 @@ class GradPOVMEstimator(Estimator):
             super().__init__(
                 qc, qubitOp, exact, backend=backend, return_counts=return_counts
             )
-        elif isinstance(qubitOp, WeightedPauliOperator):
+        elif isinstance(qubitOp, OperatorBase):
             op = POVMOperator(qubitOp , povm_params= povm_params)
             super().__init__(
                 qc, op, exact, backend=backend, return_counts=return_counts
             )
         else:
-            raise ValueError("Expected a POVMOperator or WeightedPauliOperator")
+            raise ValueError("Expected a POVMOperator or OperatorBase")
 
         # We need to overwrite the base circuit construction
         self.circs = [qc]
@@ -397,7 +406,7 @@ class GoogleGradPOVMEstimator(Estimator):
         """Instantiates a PauliEstimator
         Args:
             qc (QuantumCircuit): circuit implementing the state
-            qubitOp (WeightedPauliOperator): The operator to evaluate
+            qubitOp (OperatorBase): The operator to evaluate
             exact (float): The exact value for the operator on the circuit qc.
             backend (BaseBackend, optional): the backend for running the circuit.
                                 Defaults to Aer.get_backend('qasm_simulator').
@@ -414,7 +423,7 @@ class GoogleGradPOVMEstimator(Estimator):
                 backend=backend,
                 return_counts=return_counts,
             )
-        elif isinstance(qubitOp, WeightedPauliOperator):
+        elif isinstance(qubitOp, OperatorBase):
             op = POVMOperator(
                 qubitOp, povm_params=self._Google_params * qubitOp.num_qubits
             )
@@ -422,7 +431,7 @@ class GoogleGradPOVMEstimator(Estimator):
                 qc, op, exact, backend=backend, return_counts=return_counts
             )
         else:
-            raise ValueError("Expected a POVMOperator or WeightedPauliOperator")
+            raise ValueError("Expected a POVMOperator or OperatorBase")
 
         # We need to overwrite the base circuit construction
         self.circs = [qc]
